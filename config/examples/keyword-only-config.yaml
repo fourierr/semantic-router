@@ -1,0 +1,250 @@
+version: v0.3
+
+listeners:
+  - name: http-8080
+    address: 0.0.0.0
+    port: 8080
+    timeout: 300s
+
+providers:
+  defaults:
+    default_model: gpt-3.5-turbo
+    default_reasoning_effort: medium
+  models:
+    - name: gpt-3.5-turbo
+      reasoning_family: gpt
+      provider_model_id: gpt-3.5-turbo
+      api_format: openai
+      pricing:
+        currency: USD
+        prompt_per_1m: 0.5
+        completion_per_1m: 1.5
+      external_model_ids:
+        openai: gpt-3.5-turbo
+      backend_refs:
+        - name: openai-primary
+          endpoint: api.openai.com:443
+          protocol: https
+          weight: 100
+          type: openai
+    - name: gpt-4
+      reasoning_family: gpt
+      provider_model_id: gpt-4
+      api_format: openai
+      pricing:
+        currency: USD
+        prompt_per_1m: 30.0
+        completion_per_1m: 60.0
+      external_model_ids:
+        openai: gpt-4
+      backend_refs:
+        - name: openai-primary
+          endpoint: api.openai.com:443
+          protocol: https
+          weight: 100
+          type: openai
+
+routing:
+  modelCards:
+    - name: gpt-3.5-turbo
+      param_size: 6B
+      context_window_size: 16385
+      description: Fast and cost-effective for simple queries
+      capabilities: [chat, reasoning]
+      quality_score: 0.85
+      modality: ar
+      tags: [fast, default]
+    - name: gpt-4
+      param_size: 100B
+      context_window_size: 8192
+      description: High-quality model for complex reasoning tasks
+      capabilities: [chat, reasoning, analysis]
+      quality_score: 0.95
+      modality: ar
+      tags: [premium, complex]
+
+  signals:
+    keywords:
+      - name: simple_greeting
+        operator: OR
+        keywords: ["hello", "hi", "hey", "good morning", "good afternoon"]
+        case_sensitive: false
+      - name: help_request
+        operator: OR
+        keywords: ["help", "assist", "support", "how to", "guide", "explain"]
+        case_sensitive: false
+      - name: code_keywords
+        operator: OR
+        keywords: ["code", "programming", "function", "debug", "algorithm", "bug", "error"]
+        case_sensitive: false
+        method: bm25
+        bm25_threshold: 0.1
+      - name: urgent_keywords
+        operator: OR
+        keywords: ["urgent", "asap", "immediately", "emergency", "critical"]
+        case_sensitive: false
+      - name: creative_keywords
+        operator: OR
+        keywords: ["write", "story", "creative", "imagine", "design", " brainstorm"]
+        case_sensitive: false
+        method: ngram
+        ngram_threshold: 0.4
+        ngram_arity: 3
+      - name: data_analysis
+        operator: OR
+        keywords: ["analyze", "data", "chart", "graph", "statistics", "trend", "report"]
+        case_sensitive: false
+      - name: question_words
+        operator: OR
+        keywords: ["what", "why", "how", "when", "where", "who", "which"]
+        case_sensitive: false
+
+  decisions:
+    - name: fast_greeting_route
+      description: Fast route for simple greetings
+      priority: 100
+      rules:
+        operator: AND
+        conditions:
+          - type: keyword
+            name: simple_greeting
+      modelRefs:
+        - model: gpt-3.5-turbo
+          use_reasoning: false
+      plugins:
+        - type: fast_response
+          configuration:
+            enabled: true
+            message: Hello! How can I assist you today?
+
+    - name: help_route
+      description: Route for help and support requests
+      priority: 90
+      rules:
+        operator: AND
+        conditions:
+          - type: keyword
+            name: help_request
+      modelRefs:
+        - model: gpt-3.5-turbo
+          use_reasoning: false
+      plugins:
+        - type: semantic-cache
+          configuration:
+            enabled: true
+            similarity_threshold: 0.85
+
+    - name: code_route
+      description: Route for coding-related requests
+      priority: 80
+      rules:
+        operator: AND
+        conditions:
+          - type: keyword
+            name: code_keywords
+      modelRefs:
+        - model: gpt-4
+          use_reasoning: true
+          reasoning_effort: high
+      plugins:
+        - type: semantic-cache
+          configuration:
+            enabled: true
+            similarity_threshold: 0.85
+
+    - name: urgent_route
+      description: Priority route for urgent requests
+      priority: 70
+      rules:
+        operator: AND
+        conditions:
+          - type: keyword
+            name: urgent_keywords
+      modelRefs:
+        - model: gpt-4
+          use_reasoning: true
+          reasoning_effort: medium
+      plugins:
+        - type: fast_response
+          configuration:
+            enabled: true
+            message: I understand this is urgent. Let me help you right away.
+
+    - name: creative_route
+      description: Route for creative writing tasks
+      priority: 60
+      rules:
+        operator: AND
+        conditions:
+          - type: keyword
+            name: creative_keywords
+      modelRefs:
+        - model: gpt-4
+          use_reasoning: true
+          reasoning_effort: medium
+      plugins:
+        - type: system_prompt
+          configuration:
+            enabled: true
+            mode: insert
+            system_prompt: You are a creative writing assistant. Provide engaging and imaginative responses.
+
+    - name: data_route
+      description: Route for data analysis requests
+      priority: 50
+      rules:
+        operator: AND
+        conditions:
+          - type: keyword
+            name: data_analysis
+      modelRefs:
+        - model: gpt-4
+          use_reasoning: true
+          reasoning_effort: high
+      plugins:
+        - type: semantic-cache
+          configuration:
+            enabled: true
+            similarity_threshold: 0.80
+
+    - name: general_question_route
+      description: Default route for general questions
+      priority: 10
+      rules:
+        operator: AND
+        conditions:
+          - type: keyword
+            name: question_words
+      modelRefs:
+        - model: gpt-3.5-turbo
+          use_reasoning: true
+          reasoning_effort: low
+
+    - name: default_route
+      description: Catch-all route for all other requests
+      priority: 1
+      rules:
+        operator: AND
+        conditions: []
+      modelRefs:
+        - model: gpt-3.5-turbo
+          use_reasoning: false
+
+global:
+  router:
+    config_source: file
+    strategy: priority
+    auto_model_name: auto
+
+  stores:
+    semantic_cache:
+      enabled: false
+    memory:
+      enabled: false
+
+  services:
+    observability:
+      tracing:
+        enabled: false
+      metrics:
+        enabled: true
