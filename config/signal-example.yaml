@@ -1,0 +1,197 @@
+version: v0.3
+
+listeners:
+  - name: http-8899
+    address: 0.0.0.0
+    port: 8899
+    timeout: 300s
+
+providers:
+  defaults:
+    default_model: qwen3-8b
+    default_reasoning_effort: medium
+  models:
+    - name: qwen3-8b
+      provider_model_id: qwen3-8b-instruct
+      api_format: openai
+      pricing:
+        currency: USD
+        prompt_per_1m: 0.18
+        completion_per_1m: 0.42
+      backend_refs:
+        - name: local-primary
+          endpoint: 127.0.0.1:8000
+          protocol: http
+          weight: 100
+
+routing:
+  modelCards:
+    - name: qwen3-8b
+      param_size: 8B
+      context_window_size: 131072
+      description: General-purpose text model.
+      capabilities: [chat, reasoning, tools]
+      quality_score: 0.83
+      modality: ar
+      tags: [default, fast]
+
+  signal:
+    keywords:
+      - name: urgent_keywords
+        operator: OR
+        method: bm25
+        keywords: ["urgent", "immediate", "asap", "emergency"]
+        case_sensitive: false
+        bm25_threshold: 0.1
+      - name: code_keywords
+        operator: OR
+        method: ngram
+        keywords: ["code", "function", "debug", "algorithm"]
+        case_sensitive: false
+        ngram_threshold: 0.4
+        ngram_arity: 2
+      - name: sensitive_keywords
+        operator: OR
+        method: fuzzy
+        keywords: ["password", "secret", "api key", "credit card"]
+        case_sensitive: false
+        fuzzy_match: true
+        fuzzy_threshold: 80
+
+    embeddings:
+      - name: technical_support
+        threshold: 0.75
+        aggregation_method: max
+        candidates:
+          - how to configure the system
+          - installation guide
+          - troubleshooting steps
+          - error message explanation
+      - name: account_management
+        threshold: 0.72
+        aggregation_method: any
+        candidates:
+          - password reset
+          - account settings
+          - billing information
+
+    domains:
+      - name: business
+        description: Business and management related queries.
+        mmlu_categories: [business]
+        model_scores:
+          - model: qwen3-8b
+            score: 0.9
+            use_reasoning: true
+      - name: "computer science"
+        description: Computer science and engineering prompts.
+        mmlu_categories: ["computer science"]
+      - name: health
+        description: Health and medical information requests.
+        mmlu_categories: [health]
+      - name: other
+        description: General fallback traffic.
+        mmlu_categories: [other]
+
+    language:
+      - name: zh
+        description: Chinese-language requests.
+      - name: en
+        description: English-language requests.
+      - name: es
+        description: Spanish-language requests.
+
+    complexity:
+      - name: needs_reasoning
+        threshold: 0.75
+        description: Escalate multi-step reasoning or synthesis-heavy prompts.
+        hard:
+          candidates:
+            - solve this step by step
+            - compare multiple tradeoffs
+            - analyze the root cause
+        easy:
+          candidates:
+            - answer briefly
+            - quick summary
+            - simple rewrite
+
+    modality:
+      - name: AR
+        description: Text-only autoregressive requests.
+      - name: DIFFUSION
+        description: Image-generation requests.
+
+  decisions:
+    - name: urgent_priority_route
+      description: High-priority route for urgent requests.
+      priority: 200
+      rules:
+        operator: AND
+        conditions:
+          - type: signal
+            name: urgent_keywords
+      modelRefs:
+        - model: qwen3-8b
+          use_reasoning: true
+          reasoning_effort: high
+      algorithm:
+        type: static
+      plugins:
+        - type: system_prompt
+          configuration:
+            enabled: true
+            mode: insert
+            system_prompt: You are a helpful assistant. Prioritize accuracy and speed.
+
+    - name: technical_support_route
+      description: Technical support route using semantic embeddings.
+      priority: 150
+      rules:
+        operator: AND
+        conditions:
+          - type: signal
+            name: technical_support
+      modelRefs:
+        - model: qwen3-8b
+          use_reasoning: true
+      algorithm:
+        type: confidence
+        confidence:
+          confidence_method: hybrid
+          threshold: 0.72
+
+    - name: code_analysis_route
+      description: Route for code-related queries.
+      priority: 180
+      rules:
+        operator: AND
+        conditions:
+          - type: signal
+            name: code_keywords
+      modelRefs:
+        - model: qwen3-8b
+          use_reasoning: true
+          reasoning_effort: medium
+      algorithm:
+        type: static
+
+    - name: fallback_route
+      description: Default fallback route for general traffic.
+      priority: 100
+      rules:
+        operator: AND
+        conditions:
+          - type: signal
+            name: other
+      modelRefs:
+        - model: qwen3-8b
+          use_reasoning: false
+      algorithm:
+        type: static
+
+global:
+  router:
+    config_source: file
+    strategy: priority
+    auto_model_name: exhaustive-reference
